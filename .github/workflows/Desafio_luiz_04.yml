@@ -1,0 +1,70 @@
+name: Desafio 4 - Quality Gate
+
+on: [push, pull_request]
+
+jobs:
+  test-and-verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+
+      - name: Configurar JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      # Passo 1: Executar testes e gerar relatório JaCoCo
+      - name: Executar Testes com Maven
+        run: mvn clean verify
+
+      # Passo 2: Verificar Cobertura e Parsear Relatório
+      # Aqui usamos 'awk' para ler o CSV gerado pelo JaCoCo.
+      # O JaCoCo CSV tem colunas: INSTRUCTION_MISSED, INSTRUCTION_COVERED
+      - name: Verificar Cobertura Mínima (80%)
+        id: check_coverage
+        run: |
+          echo "Calculando cobertura..."
+          
+          # Caminho padrão do relatório CSV do JaCoCo
+          REPORT_FILE=target/site/jacoco/jacoco.csv
+          
+          if [ ! -f "$REPORT_FILE" ]; then
+            echo "Relatório de cobertura não encontrado!"
+            exit 1
+          fi
+
+          # Script AWK para somar instruções cobertas e perdidas
+          # Coluna 4 = Instruções perdidas, Coluna 5 = Instruções cobertas
+          COVERAGE=$(awk -F, 'NR>1 {missed+=$4; covered+=$5} END {print (covered/(missed+covered))*100}' $REPORT_FILE)
+          
+          # Formatar para 2 casas decimais
+          COVERAGE_FORMATTED=$(printf "%.2f" $COVERAGE)
+          
+          echo "Cobertura Atual: $COVERAGE_FORMATTED%"
+          
+          # Exportar variável para passos seguintes (opcional)
+          echo "COVERAGE=$COVERAGE_FORMATTED" >> $GITHUB_ENV
+          
+          # Lógica de Falha (Comparação de ponto flutuante via bc)
+          if (( $(echo "$COVERAGE < 80.0" | bc -l) )); then
+            echo "❌ FALHA: Cobertura abaixo de 80%!"
+            exit 1
+          else
+            echo "✅ SUCESSO: Meta de cobertura atingida."
+          fi
+
+      # Passo 3: Mensagem de Sucesso (Executa apenas se o anterior passou)
+      - name: Notificar Sucesso
+        if: success()
+        run: |
+          echo "🎉 Parabéns! O código passou com ${{ env.COVERAGE }}% de cobertura."
+
+      # Passo 4: Mensagem de Falha (Executa apenas se falhou)
+      - name: Notificar Falha
+        if: failure()
+        run: |
+          echo "🚫 Bloqueado! Melhore seus testes. Cobertura atual: ${{ env.COVERAGE }}% (Mínimo: 80%)"
